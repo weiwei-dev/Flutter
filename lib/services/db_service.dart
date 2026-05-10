@@ -1,0 +1,140 @@
+import '../utils/db.dart';
+import '../models/procurement.dart';
+import '../models/return_record.dart';
+import 'dart:developer';
+
+class DbService {
+  static final DbService instance = DbService._privateConstructor();
+
+  DbService._privateConstructor();
+
+  Future<void> initDatabase() async {
+    log('Initializing database...');
+    try {
+      await DatabaseHelper.instance.database;
+      log('Database initialized successfully');
+    } catch (e) {
+      log('Database initialization error (expected on web): $e');
+      // Web平台使用内存存储，这里捕获异常以允许应用继续运行
+    }
+  }
+
+  Future<ProcurementRecord> addProcurementRecord(
+    ProcurementRecord record,
+  ) async {
+    int id = await DatabaseHelper.instance.insertRecord(record);
+    return ProcurementRecord(
+      id: id,
+      category: record.category,
+      quantity: record.quantity,
+      unit: record.unit,
+      price: record.price,
+      totalAmount: record.totalAmount,
+      serviceFee: record.serviceFee,
+      grade: record.grade,
+      supplierLocation: record.supplierLocation,
+      imagePath: record.imagePath,
+      createTime: record.createTime,
+      settleStatus: record.settleStatus,
+      settleTime: record.settleTime,
+      remark: record.remark,
+    );
+  }
+
+  Future<List<ProcurementRecord>> getProcurementRecords(String date) async {
+    return await DatabaseHelper.instance.getTodayRecords(date);
+  }
+
+  Future<List<ProcurementRecord>> getAllProcurementRecords() async {
+    return await DatabaseHelper.instance.getAllRecords();
+  }
+
+  Future<List<ProcurementRecord>> getRecordsByDateRange(
+    String startDate,
+    String endDate,
+  ) async {
+    return await DatabaseHelper.instance.getRecordsByDateRange(
+      startDate,
+      endDate,
+    );
+  }
+
+  Future<void> updateProcurementRecord(ProcurementRecord record) async {
+    await DatabaseHelper.instance.updateRecord(record);
+  }
+
+  Future<void> deleteProcurementRecord(int id) async {
+    await DatabaseHelper.instance.deleteRecord(id);
+  }
+
+  Future<void> settleProcurementRecords(
+    List<int> ids,
+    String settleTime,
+  ) async {
+    await DatabaseHelper.instance.updateSettleStatus(ids, 1, settleTime);
+  }
+
+  /// 更新单个记录的清账状态
+  Future<void> updateRecordSettleStatus(
+    int id,
+    int settleStatus,
+    String? settleTime,
+  ) async {
+    await DatabaseHelper.instance.updateSingleSettleStatus(
+      id,
+      settleStatus,
+      settleTime,
+    );
+  }
+
+  Future<Map<String, dynamic>> getDailyFinance(String date) async {
+    return await DatabaseHelper.instance.getDailyFinance(date);
+  }
+
+  Future<void> updateDailyFinance(
+    String date,
+    double income,
+    double expense,
+    double balance,
+    String remark,
+  ) async {
+    await DatabaseHelper.instance.updateDailyFinance(
+      date,
+      income,
+      expense,
+      balance,
+      remark,
+    );
+  }
+
+  /// 根据品类获取最近一条采购记录（用于智能回填）
+  Future<ProcurementRecord?> getLastRecordByCategory(String category) async {
+    return await DatabaseHelper.instance.getLastRecordByCategory(category);
+  }
+
+  /// 获取指定日期范围内的退货记录
+  Future<List<ReturnRecord>> getReturnRecordsByDateRange(
+    String startDate,
+    String endDate,
+  ) async {
+    return await DatabaseHelper.instance.getReturnRecordsByDateRange(
+      startDate,
+      endDate,
+    );
+  }
+
+  /// 搜索采购记录
+  Future<List<ProcurementRecord>> searchProcurementRecords(String keyword) async {
+    return await DatabaseHelper.instance.searchProcurementRecords(keyword);
+  }
+
+  /// 搜索退货记录
+  Future<List<ReturnRecord>> searchReturnRecords(String keyword) async {
+    return await DatabaseHelper.instance.searchReturnRecords(keyword);
+  }
+
+  /// 获取所有唯一的水果品类
+  Future<List<String>> getAllCategories() async {
+    return await DatabaseHelper.instance.getCategories();
+  }
+}
