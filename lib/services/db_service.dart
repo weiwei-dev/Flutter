@@ -137,4 +137,62 @@ class DbService {
   Future<List<String>> getAllCategories() async {
     return await DatabaseHelper.instance.getCategories();
   }
+
+  /// 获取指定日期范围内的所有唯一水果品类（用于库存盘点）
+  Future<List<String>> getCategoriesByDateRange(
+    String startDate,
+    String endDate,
+  ) async {
+    return await DatabaseHelper.instance.getCategoriesByDateRange(
+      startDate,
+      endDate,
+    );
+  }
+
+  /// 保存一份库存盘点记录（批量）
+  Future<void> saveInventoryCheck(
+    String sheetId,
+    List<String> categories,
+    String startDate,
+    String endDate,
+    String createdAt, {
+    Map<String, String>? quantities,
+  }) async {
+    await DatabaseHelper.instance.saveInventoryCheck(
+      sheetId,
+      categories,
+      startDate,
+      endDate,
+      createdAt,
+      quantities: quantities,
+    );
+  }
+
+  /// 更新某品类行的库存数量
+  Future<void> updateInventoryQuantity(
+    String sheetId,
+    String category,
+    String quantity,
+  ) async {
+    await DatabaseHelper.instance.updateInventoryQuantity(
+      sheetId,
+      category,
+      quantity,
+    );
+  }
+
+  /// 获取某份盘点的所有品类行
+  Future<List<Map<String, dynamic>>> getInventoryCheck(String sheetId) async {
+    return await DatabaseHelper.instance.getInventoryCheck(sheetId);
+  }
+
+  /// 获取所有盘点记录概要（按时间倒序）
+  Future<List<Map<String, dynamic>>> getAllInventoryChecks() async {
+    return await DatabaseHelper.instance.getAllInventoryChecks();
+  }
+
+  /// 删除一份盘点
+  Future<void> deleteInventoryCheck(String sheetId) async {
+    await DatabaseHelper.instance.deleteInventoryCheck(sheetId);
+  }
 }

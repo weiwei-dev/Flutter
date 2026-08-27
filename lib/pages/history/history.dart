@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../components/tab_bar.dart';
 import 'controller/history_controller.dart';
 import 'widgets/history_widgets.dart';
+import '../inventory/inventory_select_page.dart';
 
 /// 历史记录导出页 - UI骨架
 class HistoryPage extends StatelessWidget {
@@ -91,6 +92,14 @@ class _HistoryViewState extends State<_HistoryView>
       TDToast.showSuccess('全部数据导出成功', context: context);
     } else if (!result.success && mounted) {
       TDToast.showText('导出失败: ${result.error}', context: context);
+    }
+  }
+
+  Future<void> _exportInventoryCheck(HistoryController controller) async {
+    // 跳转到独立库存盘点页（自带日期选择）
+    final result = await Navigator.pushNamed(context, '/inventory_select');
+    if (result == true && mounted) {
+      TDToast.showSuccess('库存盘点表已导出', context: context);
     }
   }
 
@@ -258,6 +267,9 @@ class _HistoryViewState extends State<_HistoryView>
               // 全部导出按钮
               _buildExportAllButton(controller),
               const SizedBox(height: 10),
+              // 库存盘点表导出按钮
+              _buildExportInventoryButton(controller),
+              const SizedBox(height: 10),
               // 导入按钮
               _buildImportButton(controller),
               const SizedBox(height: 16),
@@ -304,6 +316,27 @@ class _HistoryViewState extends State<_HistoryView>
       isBlock: true,
       disabled: controller.isExporting,
       onTap: controller.isExporting ? null : () => _exportAllExcel(controller),
+    );
+  }
+
+  Widget _buildExportInventoryButton(HistoryController controller) {
+    return TDButton(
+      text: controller.isExporting ? '导出中...' : '导出库存盘点表',
+      size: TDButtonSize.large,
+      type: TDButtonType.outline,
+      theme: TDButtonTheme.defaultTheme,
+      style: TDButtonStyle(
+        backgroundColor: controller.isExporting
+            ? TDTheme.of(context).brandNormalColor.withValues(alpha: 0.05)
+            : Colors.transparent,
+        textColor: TDTheme.of(context).brandNormalColor,
+      ),
+      icon: controller.isExporting ? TDIcons.loading : TDIcons.download,
+      isBlock: true,
+      disabled: controller.isExporting,
+      onTap: controller.isExporting
+          ? null
+          : () => _exportInventoryCheck(controller),
     );
   }
 

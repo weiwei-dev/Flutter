@@ -12,6 +12,8 @@ class MemoryDatabase {
   final List<ReturnRecord> _returnRecords = [];
   final Map<String, Map<String, dynamic>> _dailyFinance = {};
   final List<CleanupLog> _cleanupLogs = [];
+  // 库存盘点：sheetId -> 行数据（category / stock_quantity / 元信息）
+  final Map<String, List<Map<String, dynamic>>> _inventoryChecks = {};
   int _nextId = 1;
   int _returnNextId = 1;
   int _cleanupLogNextId = 1;
@@ -336,6 +338,98 @@ class MemoryDatabase {
     return categories;
   }
 
+  // 获取指定日期范围内的水果品类（用于库存盘点）
+  Future<List<String>> getCategoriesByDateRange(
+    String startDate,
+    String endDate,
+  ) async {
+    final records = _procurementRecords
+        .where(
+          (record) =>
+              record.createTime.compareTo(startDate) >= 0 &&
+              record.createTime.compareTo(endDate) <= 0,
+        )
+        .toList();
+    final categories = records
+        .map((record) => record.category)
+        .toSet()
+        .toList();
+    categories.sort();
+    return categories;
+  }
+
+  // ===== 库存盘点记录（Web 内存实现） =====
+
+  Future<void> saveInventoryCheck(
+    String sheetId,
+    List<String> categories,
+    String startDate,
+    String endDate,
+    String createdAt, {
+    Map<String, String>? quantities,
+  }) async {
+    final rows = categories
+        .map(
+          (c) => {
+            'sheet_id': sheetId,
+            'category': c,
+            'stock_quantity': quantities?[c] ?? '',
+            'start_date': startDate,
+            'end_date': endDate,
+            'created_at': createdAt,
+            'updated_at': createdAt,
+          },
+        )
+        .toList();
+    _inventoryChecks[sheetId] = rows;
+  }
+
+  Future<void> updateInventoryQuantity(
+    String sheetId,
+    String category,
+    String quantity,
+  ) async {
+    final rows = _inventoryChecks[sheetId];
+    if (rows == null) return;
+    for (final row in rows) {
+      if (row['category'] == category) {
+        row['stock_quantity'] = quantity;
+        row['updated_at'] = DateTime.now().toString();
+      }
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getInventoryCheck(String sheetId) async {
+    return _inventoryChecks[sheetId] ?? [];
+  }
+
+  Future<List<Map<String, dynamic>>> getAllInventoryChecks() async {
+    final List<Map<String, dynamic>> result = [];
+    for (final entry in _inventoryChecks.entries) {
+      final sheetId = entry.key;
+      final rows = entry.value;
+      final filled =
+          rows.where((r) => (r['stock_quantity'] ?? '').toString().isNotEmpty).length;
+      if (rows.isNotEmpty) {
+        result.add({
+          'sheet_id': sheetId,
+          'start_date': rows.first['start_date'],
+          'end_date': rows.first['end_date'],
+          'created_at': rows.first['created_at'],
+          'item_count': rows.length,
+          'filled_count': filled,
+        });
+      }
+    }
+    result.sort((a, b) =>
+        (b['created_at'] as String).compareTo(a['created_at'] as String));
+    return result;
+  }
+
+  Future<void> deleteInventoryCheck(String sheetId) async {
+    _inventoryChecks.remove(sheetId);
+  }
+
   // 获取指定日期和品类的采购信息
   Future<Map<String, dynamic>?> getCategoryInfoByDate(
     String category,
@@ -473,7 +567,7 @@ class DatabaseHelper {
     String path = join(await getDatabasesPath(), 'fruit_procurement.db');
     return await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _createTables,
       onUpgrade: _onUpgrade,
     );
@@ -516,6 +610,21 @@ class DatabaseHelper {
     if (oldVersion < 6) {
       // 版本6：添加补单相关字段
       await _addSupplementFields(db);
+    }
+    if (oldVersion < 7) {
+      // 版本7：添加库存盘点记录表
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS inventory_checks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          sheet_id TEXT NOT NULL,
+          category TEXT NOT NULL,
+          stock_quantity TEXT,
+          start_date TEXT,
+          end_date TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT
+        )
+      ''');
     }
   }
 
@@ -615,6 +724,20 @@ class DatabaseHelper {
         deletedRecords TEXT NOT NULL,
         isRolledBack INTEGER DEFAULT 0,
         rollbackTime TEXT
+      )
+    ''');
+
+    // 创建库存盘点记录表
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS inventory_checks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sheet_id TEXT NOT NULL,
+        category TEXT NOT NULL,
+        stock_quantity TEXT,
+        start_date TEXT,
+        end_date TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT
       )
     ''');
 
@@ -862,6 +985,137 @@ class DatabaseHelper {
       ['$date%'],
     );
     return maps.map((m) => m['category'] as String).toList();
+  }
+
+  // 获取指定日期范围内的水果品类（用于库存盘点）
+  Future<List<String>> getCategoriesByDateRange(
+    String startDate,
+    String endDate,
+  ) async {
+    if (kIsWeb) {
+      return await MemoryDatabase.instance.getCategoriesByDateRange(
+        startDate,
+        endDate,
+      );
+    }
+    Database db = await instance.database;
+    List<Map<String, dynamic>> maps = await db.rawQuery(
+      'SELECT DISTINCT category FROM procurement WHERE create_time >= ? AND create_time <= ? ORDER BY category ASC',
+      [startDate, endDate],
+    );
+    return maps.map((m) => m['category'] as String).toList();
+  }
+
+  // ===== 库存盘点记录 CRUD =====
+
+  /// 保存一份盘点（批量插入品类行）。若 sheetId 已存在则先删除旧数据。
+  Future<void> saveInventoryCheck(
+    String sheetId,
+    List<String> categories,
+    String startDate,
+    String endDate,
+    String createdAt, {
+    Map<String, String>? quantities,
+  }) async {
+    if (kIsWeb) {
+      await MemoryDatabase.instance.saveInventoryCheck(
+        sheetId,
+        categories,
+        startDate,
+        endDate,
+        createdAt,
+        quantities: quantities,
+      );
+      return;
+    }
+    Database db = await instance.database;
+    await db.delete(
+      'inventory_checks',
+      where: 'sheet_id = ?',
+      whereArgs: [sheetId],
+    );
+    final batch = db.batch();
+    for (final category in categories) {
+      batch.insert('inventory_checks', {
+        'sheet_id': sheetId,
+        'category': category,
+        'stock_quantity': quantities?[category] ?? '',
+        'start_date': startDate,
+        'end_date': endDate,
+        'created_at': createdAt,
+        'updated_at': createdAt,
+      });
+    }
+    await batch.commit(noResult: true);
+  }
+
+  /// 更新某一行的库存数量
+  Future<void> updateInventoryQuantity(
+    String sheetId,
+    String category,
+    String quantity,
+  ) async {
+    if (kIsWeb) {
+      await MemoryDatabase.instance.updateInventoryQuantity(
+        sheetId,
+        category,
+        quantity,
+      );
+      return;
+    }
+    Database db = await instance.database;
+    await db.update(
+      'inventory_checks',
+      {'stock_quantity': quantity, 'updated_at': DateTime.now().toString()},
+      where: 'sheet_id = ? AND category = ?',
+      whereArgs: [sheetId, category],
+    );
+  }
+
+  /// 获取某份盘点的所有品类与库存数量
+  Future<List<Map<String, dynamic>>> getInventoryCheck(String sheetId) async {
+    if (kIsWeb) {
+      return await MemoryDatabase.instance.getInventoryCheck(sheetId);
+    }
+    Database db = await instance.database;
+    final maps = await db.query(
+      'inventory_checks',
+      where: 'sheet_id = ?',
+      whereArgs: [sheetId],
+      orderBy: 'category ASC',
+    );
+    return maps;
+  }
+
+  /// 获取所有盘点记录（按 sheetId 分组，返回每条记录的关键信息）
+  Future<List<Map<String, dynamic>>> getAllInventoryChecks() async {
+    if (kIsWeb) {
+      return await MemoryDatabase.instance.getAllInventoryChecks();
+    }
+    Database db = await instance.database;
+    final maps = await db.rawQuery('''
+      SELECT sheet_id, start_date, end_date, created_at,
+             COUNT(*) AS item_count,
+             SUM(CASE WHEN stock_quantity IS NOT NULL AND stock_quantity != '' THEN 1 ELSE 0 END) AS filled_count
+      FROM inventory_checks
+      GROUP BY sheet_id
+      ORDER BY created_at DESC
+    ''');
+    return maps;
+  }
+
+  /// 删除一份盘点
+  Future<void> deleteInventoryCheck(String sheetId) async {
+    if (kIsWeb) {
+      await MemoryDatabase.instance.deleteInventoryCheck(sheetId);
+      return;
+    }
+    Database db = await instance.database;
+    await db.delete(
+      'inventory_checks',
+      where: 'sheet_id = ?',
+      whereArgs: [sheetId],
+    );
   }
 
   // 获取指定日期和品类的采购信息

@@ -11,6 +11,9 @@ import '../pages/about/about.dart';
 import '../pages/search/search.dart';
 import '../pages/cleanup/cleanup.dart';
 import '../pages/supplement/supplement_list.dart';
+import '../pages/inventory/inventory_select_page.dart';
+import '../pages/inventory/inventory_fill_page.dart';
+import '../pages/inventory/inventory_history_page.dart';
 
 class AppRoutes {
   static const String home = '/';
@@ -25,6 +28,9 @@ class AppRoutes {
   static const String search = '/search';
   static const String cleanup = '/cleanup';
   static const String supplement = '/supplement';
+  static const String inventorySelect = '/inventory_select';
+  static const String inventoryFill = '/inventory_fill';
+  static const String inventoryHistory = '/inventory_history';
 
   static Map<String, WidgetBuilder> routes = {
     home: (context) => const HomePage(),
@@ -39,5 +45,12 @@ class AppRoutes {
     search: (context) => const SearchPage(),
     cleanup: (context) => const DataCleanupPage(),
     supplement: (context) => const SupplementListPage(),
+    inventorySelect: (context) => const InventorySelectPage(),
+    inventoryFill: (context) => const InventoryFillPage(
+          categories: [],
+          startDate: '',
+          endDate: '',
+        ),
+    inventoryHistory: (context) => const InventoryHistoryPage(),
   };
 }

@@ -4,6 +4,8 @@ import '../../services/backup_service.dart';
 import '../../services/version_service.dart';
 import '../../components/tab_bar.dart';
 import 'package:file_selector/file_selector.dart';
+import '../inventory/inventory_select_page.dart';
+import '../inventory/inventory_history_page.dart';
 
 class AboutPage extends StatefulWidget {
   const AboutPage({super.key});
@@ -280,6 +282,24 @@ class _AboutPageState extends State<AboutPage>
                                 onTap: () =>
                                     Navigator.pushNamed(context, '/analysis'),
                                 color: const Color(0xFF9C27B0),
+                              ),
+                              const Divider(height: 16),
+                              _buildQuickActionItem(
+                                icon: TDIcons.file_1,
+                                title: '库存盘点',
+                                subtitle: '勾选品类导出盘点表',
+                                onTap: () => Navigator.pushNamed(
+                                    context, '/inventory_select'),
+                                color: const Color(0xFF00C8A0),
+                              ),
+                              const Divider(height: 16),
+                              _buildQuickActionItem(
+                                icon: TDIcons.history,
+                                title: '盘点历史',
+                                subtitle: '查看/继续编辑已保存的盘点',
+                                onTap: () => Navigator.pushNamed(
+                                    context, '/inventory_history'),
+                                color: const Color(0xFF00C8A0),
                               ),
                             ],
                           ),
