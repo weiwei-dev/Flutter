@@ -37,6 +37,9 @@ class MemoryDatabase {
       settleStatus: record.settleStatus,
       settleTime: record.settleTime,
       remark: record.remark,
+      isSupplement: record.isSupplement,
+      orderTime: record.orderTime,
+      purchaseType: record.purchaseType,
     );
     _procurementRecords.add(newRecord);
     return newRecord.id!;
@@ -95,6 +98,9 @@ class MemoryDatabase {
           settleStatus: status,
           settleTime: settleTime,
           remark: record.remark,
+          isSupplement: record.isSupplement,
+          orderTime: record.orderTime,
+          purchaseType: record.purchaseType,
         );
         await updateRecord(updatedRecord);
         updatedCount++;
@@ -127,6 +133,9 @@ class MemoryDatabase {
         settleStatus: status,
         settleTime: settleTime,
         remark: record.remark,
+        isSupplement: record.isSupplement,
+        orderTime: record.orderTime,
+        purchaseType: record.purchaseType,
       );
       _procurementRecords[index] = updatedRecord;
       return 1;
@@ -268,6 +277,11 @@ class MemoryDatabase {
     };
   }
 
+  // 检查某日是否有财务记录
+  Future<bool> hasDailyFinance(String date) async {
+    return _dailyFinance.containsKey(date);
+  }
+
   // 更新每日财务统计
   Future<int> updateDailyFinance(
     String date,
@@ -356,6 +370,41 @@ class MemoryDatabase {
         .toList();
     categories.sort();
     return categories;
+  }
+
+  // 获取欠款类记录（purchaseType 为 null 表示所有欠款类型：回货+赊账）
+  Future<List<ProcurementRecord>> getDebtRecords({
+    int? purchaseType,
+    int? settleStatus,
+  }) async {
+    return _procurementRecords
+        .where(
+          (record) => purchaseType == null
+              ? record.isDebtRecord
+              : record.purchaseType == purchaseType,
+        )
+        .where(
+          (record) =>
+              settleStatus == null || record.settleStatus == settleStatus,
+        )
+        .toList();
+  }
+
+  // 获取指定日期范围内结账的欠款记录（用于财货详情：今天结账的欠款也要算到今天）
+  Future<List<ProcurementRecord>> getSettledDebtRecordsByDateRange(
+    String startDate,
+    String endDate,
+  ) async {
+    return _procurementRecords
+        .where(
+          (record) =>
+              record.settleStatus == 1 &&
+              record.isDebtRecord &&
+              record.settleTime != null &&
+              record.settleTime!.compareTo(startDate) >= 0 &&
+              record.settleTime!.compareTo(endDate) <= 0,
+        )
+        .toList();
   }
 
   // ===== 库存盘点记录（Web 内存实现） =====
@@ -567,7 +616,7 @@ class DatabaseHelper {
     String path = join(await getDatabasesPath(), 'fruit_procurement.db');
     return await openDatabase(
       path,
-      version: 7,
+      version: 9,
       onCreate: _createTables,
       onUpgrade: _onUpgrade,
     );
@@ -626,6 +675,22 @@ class DatabaseHelper {
         )
       ''');
     }
+    if (oldVersion < 8) {
+      // 版本8：添加外地回货标记字段
+      await db.execute('''
+        ALTER TABLE procurement ADD COLUMN is_return_goods INTEGER DEFAULT 0
+      ''');
+    }
+    if (oldVersion < 9) {
+      // 版本9：新增采购类型字段（0本地采购/1外地回货/2本地赊账）
+      await db.execute('''
+        ALTER TABLE procurement ADD COLUMN purchase_type INTEGER DEFAULT 0
+      ''');
+      // 迁移旧数据：原「外地回货」记录保持为类型 1
+      await db.execute('''
+        UPDATE procurement SET purchase_type = 1 WHERE is_return_goods = 1
+      ''');
+    }
   }
 
   /// 添加补单相关字段
@@ -680,7 +745,9 @@ class DatabaseHelper {
         settle_time TEXT,
         remark TEXT,
         is_supplement INTEGER DEFAULT 0,
-        order_time TEXT
+        order_time TEXT,
+        is_return_goods INTEGER DEFAULT 0,
+        purchase_type INTEGER DEFAULT 0
       )
     ''');
 
@@ -1006,6 +1073,61 @@ class DatabaseHelper {
     return maps.map((m) => m['category'] as String).toList();
   }
 
+  /// 获取欠款类记录（purchaseType 为 null 表示所有欠款类型：回货+赊账）
+  Future<List<ProcurementRecord>> getDebtRecords({
+    int? purchaseType,
+    int? settleStatus,
+  }) async {
+    if (kIsWeb) {
+      return await MemoryDatabase.instance.getDebtRecords(
+        purchaseType: purchaseType,
+        settleStatus: settleStatus,
+      );
+    }
+    Database db = await instance.database;
+    String where;
+    final args = <Object?>[];
+    if (purchaseType == null) {
+      where = 'purchase_type IN (1, 2)';
+    } else {
+      where = 'purchase_type = ?';
+      args.add(purchaseType);
+    }
+    if (settleStatus != null) {
+      where += ' AND settle_status = ?';
+      args.add(settleStatus);
+    }
+    final maps = await db.query(
+      'procurement',
+      where: where,
+      whereArgs: args.isEmpty ? null : args,
+      orderBy: 'create_time DESC',
+    );
+    return List.generate(maps.length, (i) => ProcurementRecord.fromMap(maps[i]));
+  }
+
+  /// 获取指定日期范围内结账的欠款记录
+  Future<List<ProcurementRecord>> getSettledDebtRecordsByDateRange(
+    String startDate,
+    String endDate,
+  ) async {
+    if (kIsWeb) {
+      return await MemoryDatabase.instance.getSettledDebtRecordsByDateRange(
+        startDate,
+        endDate,
+      );
+    }
+    Database db = await instance.database;
+    final maps = await db.query(
+      'procurement',
+      where:
+          'settle_status = ? AND purchase_type IN (1, 2) AND settle_time >= ? AND settle_time <= ?',
+      whereArgs: [1, startDate, endDate],
+      orderBy: 'settle_time DESC',
+    );
+    return List.generate(maps.length, (i) => ProcurementRecord.fromMap(maps[i]));
+  }
+
   // ===== 库存盘点记录 CRUD =====
 
   /// 保存一份盘点（批量插入品类行）。若 sheetId 已存在则先删除旧数据。
@@ -1251,6 +1373,21 @@ class DatabaseHelper {
       };
     }
     return maps[0];
+  }
+
+  /// 检查某日是否有财务记录
+  Future<bool> hasDailyFinance(String date) async {
+    if (kIsWeb) {
+      return await MemoryDatabase.instance.hasDailyFinance(date);
+    }
+    Database db = await instance.database;
+    List<Map<String, dynamic>> maps = await db.query(
+      'daily_finance',
+      where: 'date = ?',
+      whereArgs: [date],
+      limit: 1,
+    );
+    return maps.isNotEmpty;
   }
 
   // 更新每日财务统计

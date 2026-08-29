@@ -36,6 +36,8 @@ class _ScreenshotPageState extends State<ScreenshotPage>
   double _returnTotal = 0;
   double _todayIncome = 0;
   double _todayBalance = 0;
+  double _returnGoodsTotal = 0; // 当日外地回货金额
+  double _creditTotal = 0; // 当日本地赊账金额
   bool _isLoading = false;
 
   @override
@@ -73,26 +75,45 @@ class _ScreenshotPageState extends State<ScreenshotPage>
       final startDate = '$dateStr 00:00:00';
       final endDate = '$dateStr 23:59:59';
 
-      // 获取当天的采购记录
+      // 获取当天到货的采购记录
       final records = await DatabaseHelper.instance.getRecordsByDateRange(
         startDate,
         endDate,
       );
+
+      // 获取当天结账的欠款记录（createTime 不在今天，但今天在欠款管理页/清账页结账了）
+      final settledDebtRecords = await DatabaseHelper.instance
+          .getSettledDebtRecordsByDateRange(startDate, endDate);
+
+      // 合并：今天到货 + 今天结账的欠款，按 id 去重
+      final mergedRecords = List<ProcurementRecord>.from(records);
+      for (final record in settledDebtRecords) {
+        if (!mergedRecords.any((r) => r.id == record.id)) {
+          mergedRecords.add(record);
+        }
+      }
 
       // 获取当天的退货记录
       final returnRecords = await DatabaseHelper.instance
           .getReturnRecordsByDateRange(startDate, endDate);
 
       // 计算总数
-      final totalCount = records.length + returnRecords.length;
+      final totalCount = mergedRecords.length + returnRecords.length;
 
       // 计算总金额（采购金额 - 退货金额）
       double procurementTotal = 0;
-      double settledTotal = 0; // 已清账金额
-      for (var record in records) {
+      double settledTotal = 0; // 已清账金额（即今日出账）
+      double returnGoodsTotal = 0; // 外地回货金额
+      double creditTotal = 0; // 本地赊账金额
+      for (var record in mergedRecords) {
         procurementTotal += record.totalAmount;
         if (record.settleStatus == 1) {
           settledTotal += record.totalAmount;
+        }
+        if (record.purchaseType == PurchaseType.returnGoods) {
+          returnGoodsTotal += record.totalAmount;
+        } else if (record.purchaseType == PurchaseType.credit) {
+          creditTotal += record.totalAmount;
         }
       }
 
@@ -112,7 +133,7 @@ class _ScreenshotPageState extends State<ScreenshotPage>
       final todayBalance = todayIncome - settledTotal + returnTotal;
 
       setState(() {
-        _procurementRecords = records;
+        _procurementRecords = mergedRecords;
         _returnRecords = returnRecords;
         _recordCount = totalCount;
         _totalAmount = netAmount;
@@ -120,6 +141,8 @@ class _ScreenshotPageState extends State<ScreenshotPage>
         _returnTotal = returnTotal;
         _todayIncome = todayIncome;
         _todayBalance = todayBalance;
+        _returnGoodsTotal = returnGoodsTotal;
+        _creditTotal = creditTotal;
         _isLoading = false;
       });
     } catch (e) {
@@ -484,6 +507,32 @@ class _ScreenshotPageState extends State<ScreenshotPage>
                                                   : '¥${_totalAmount.toStringAsFixed(2)}',
                                             ),
                                             const Divider(height: 8),
+                                            if (_creditTotal > 0) ...[
+                                              _buildPreviewItem(
+                                                TDIcons.money,
+                                                '本地赊账',
+                                                _isLoading
+                                                    ? '加载中...'
+                                                    : '¥${_creditTotal.toStringAsFixed(2)}',
+                                                valueColor: const Color(
+                                                  0xFFFF9800,
+                                                ),
+                                              ),
+                                              const Divider(height: 8),
+                                            ],
+                                            if (_returnGoodsTotal > 0) ...[
+                                              _buildPreviewItem(
+                                                TDIcons.location,
+                                                '外地回货',
+                                                _isLoading
+                                                    ? '加载中...'
+                                                    : '¥${_returnGoodsTotal.toStringAsFixed(2)}',
+                                                valueColor: const Color(
+                                                  0xFFFF9800,
+                                                ),
+                                              ),
+                                              const Divider(height: 8),
+                                            ],
                                             _buildPreviewItem(
                                               TDIcons.wallet,
                                               '今日入账',
@@ -557,6 +606,7 @@ class _ScreenshotPageState extends State<ScreenshotPage>
                                         return _ProcurementRecordItem(
                                           record: _procurementRecords[index],
                                           index: index + 1,
+                                          selectedDate: _selectedDate,
                                         );
                                       },
                                     ),
@@ -732,8 +782,27 @@ class _ScreenshotPageState extends State<ScreenshotPage>
 class _ProcurementRecordItem extends StatelessWidget {
   final ProcurementRecord record;
   final int index;
+  final DateTime selectedDate;
 
-  const _ProcurementRecordItem({required this.record, required this.index});
+  const _ProcurementRecordItem({
+    required this.record,
+    required this.index,
+    required this.selectedDate,
+  });
+
+  /// 是否在今天结账（settleTime 是今天，且 createTime 不是今天）
+  bool _isSettledToday(ProcurementRecord record) {
+    final dateStr = DateFormat('yyyy-MM-dd').format(selectedDate);
+    return record.settleTime != null &&
+        record.settleTime!.startsWith(dateStr) &&
+        !record.createTime.startsWith(dateStr);
+  }
+
+  /// 是否在今天到货
+  bool _isArrivedToday(ProcurementRecord record) {
+    final dateStr = DateFormat('yyyy-MM-dd').format(selectedDate);
+    return record.createTime.startsWith(dateStr);
+  }
 
   /// 显示图片预览弹窗
   void _showImagePreview(BuildContext context, String imagePath) {
@@ -767,8 +836,13 @@ class _ProcurementRecordItem extends StatelessWidget {
     final isSettled = record.settleStatus == 1;
     final hasImage = record.imagePath != null && record.imagePath!.isNotEmpty;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -862,7 +936,10 @@ class _ProcurementRecordItem extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 4),
-                Row(
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     TDTag(
                       isSettled ? '已清账' : '未清账',
@@ -872,8 +949,7 @@ class _ProcurementRecordItem extends StatelessWidget {
                       size: TDTagSize.small,
                     ),
                     // 补单标记
-                    if (record.isSupplement == 1) ...[
-                      const SizedBox(width: 6),
+                    if (record.isSupplement == 1)
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 6,
@@ -897,63 +973,123 @@ class _ProcurementRecordItem extends StatelessWidget {
                           ),
                         ),
                       ),
-                    ],
-                    const SizedBox(width: 8),
-                    Icon(
-                      TDIcons.calculation,
-                      size: 11,
-                      color: Colors.grey.shade500,
-                    ),
-                    const SizedBox(width: 3),
-                    Text(
-                      '${record.quantity}${record.unit}',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Icon(TDIcons.money, size: 11, color: Colors.grey.shade500),
-                    const SizedBox(width: 3),
-                    Text(
-                      '¥${record.price}/${record.unit}',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                    // 服务费显示
-                    if (record.serviceFee > 0) ...[
-                      const SizedBox(width: 8),
-                      Icon(
-                        TDIcons.service,
-                        size: 11,
-                        color: Colors.grey.shade500,
-                      ),
-                      const SizedBox(width: 3),
-                      Text(
-                        '服务费: ¥${record.serviceFee}',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.orange.shade600,
+                    // 欠款类型标记（本地赊账 / 外地回货）
+                    if (record.isDebtRecord)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: record.purchaseType == PurchaseType.credit
+                              ? const Color(0xFFFFC107)
+                              : const Color(0xFFFF5722),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          record.purchaseType == PurchaseType.credit
+                              ? '赊账'
+                              : '回货',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: record.purchaseType == PurchaseType.credit
+                                ? Colors.black87
+                                : Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
-                    ],
+                    // 今日结账标记（createTime 不在今天，但 settleTime 在今天）
+                    if (_isSettledToday(record))
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.green.shade600,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          '今日结账',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          TDIcons.calculation,
+                          size: 11,
+                          color: Colors.grey.shade500,
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          '${record.quantity}${record.unit}',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          TDIcons.money,
+                          size: 11,
+                          color: Colors.grey.shade500,
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          '¥${record.price}/${record.unit}',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    // 服务费显示
+                    if (record.serviceFee > 0)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            TDIcons.service,
+                            size: 11,
+                            color: Colors.grey.shade500,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            '服务费: ¥${record.serviceFee}',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.orange.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
                   ],
                 ),
                 if (record.grade != null && record.grade!.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Icon(TDIcons.star, size: 11, color: Colors.grey.shade500),
-                      const SizedBox(width: 3),
+                      Icon(TDIcons.star, size: 12, color: Colors.grey.shade700),
+                      const SizedBox(width: 4),
                       Expanded(
                         child: Text(
-                          '规格: ${record.grade}',
+                          '规格: ${record.grade ?? '无'}',
                           style: TextStyle(
-                            fontSize: 10,
-                            color: Colors.grey.shade600,
+                            fontSize: 12,
+                            color: Colors.grey.shade800,
                           ),
                         ),
                       ),
@@ -964,20 +1100,44 @@ class _ProcurementRecordItem extends StatelessWidget {
                     record.supplierLocation!.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Icon(
                         TDIcons.location,
-                        size: 11,
-                        color: Colors.grey.shade500,
+                        size: 12,
+                        color: Colors.grey.shade700,
                       ),
-                      const SizedBox(width: 3),
+                      const SizedBox(width: 4),
                       Expanded(
                         child: Text(
                           record.supplierLocation!,
                           style: TextStyle(
-                            fontSize: 10,
-                            color: Colors.grey.shade600,
+                            fontSize: 12,
+                            color: Colors.grey.shade800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                // 如果不是今天到货，显示实际到货日期
+                if (!_isArrivedToday(record)) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Icon(
+                        TDIcons.calendar,
+                        size: 12,
+                        color: Colors.grey.shade700,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          '到货日期: ${record.createTime.substring(0, 10)}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade800,
                           ),
                         ),
                       ),
@@ -1094,16 +1254,16 @@ class _ReturnRecordItem extends StatelessWidget {
                 if (record.grade != null && record.grade!.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Icon(TDIcons.star, size: 11, color: Colors.grey.shade500),
-                      const SizedBox(width: 3),
+                      Icon(TDIcons.star, size: 12, color: Colors.grey.shade700),
+                      const SizedBox(width: 4),
                       Expanded(
                         child: Text(
                           '规格: ${record.grade}',
                           style: TextStyle(
-                            fontSize: 10,
-                            color: Colors.grey.shade600,
+                            fontSize: 12,
+                            color: Colors.grey.shade800,
                           ),
                         ),
                       ),
@@ -1112,20 +1272,20 @@ class _ReturnRecordItem extends StatelessWidget {
                 ],
                 const SizedBox(height: 4),
                 Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Icon(
                       TDIcons.info_circle,
-                      size: 11,
-                      color: Colors.grey.shade500,
+                      size: 12,
+                      color: Colors.grey.shade700,
                     ),
-                    const SizedBox(width: 3),
+                    const SizedBox(width: 4),
                     Expanded(
                       child: Text(
                         '原因: ${_reasons[record.returnReason]}${record.remark != null && record.remark!.isNotEmpty ? ' - ${record.remark}' : ''}',
                         style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.grey.shade600,
+                          fontSize: 12,
+                          color: Colors.grey.shade800,
                         ),
                       ),
                     ),

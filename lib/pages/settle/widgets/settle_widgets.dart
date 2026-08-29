@@ -120,8 +120,8 @@ class RecordCard extends StatelessWidget {
               else
                 Container(
                   margin: const EdgeInsets.only(right: 10),
-                  child: const TDTag(
-                    '已清账',
+                  child: TDTag(
+                    record.isDebtRecord ? '已结账' : '已清账',
                     theme: TDTagTheme.success,
                     size: TDTagSize.small,
                   ),
@@ -130,12 +130,46 @@ class RecordCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      record.category,
-                      style: const TextStyle(
-                        fontSize: AppConstants.fontNormal,
-                        fontWeight: FontWeight.w600,
-                      ),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            record.category,
+                            style: const TextStyle(
+                              fontSize: AppConstants.fontNormal,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (record.isDebtRecord) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: record.purchaseType == PurchaseType.credit
+                                  ? const Color(0xFFFFC107)
+                                  : const Color(0xFFFF5722),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              record.purchaseType == PurchaseType.credit
+                                  ? '赊账'
+                                  : '回货',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: record.purchaseType == PurchaseType.credit
+                                    ? Colors.black87
+                                    : Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 2),
                     Text(
@@ -492,6 +526,14 @@ class TodayFinanceCard extends StatelessWidget {
                 color: Colors.white.withValues(alpha: 0.8),
               ),
             ),
+            if (onTap != null) ...[
+              const SizedBox(width: 2),
+              Icon(
+                TDIcons.edit,
+                size: 9,
+                color: Colors.white.withValues(alpha: 0.7),
+              ),
+            ],
           ],
         ),
         const SizedBox(height: 4),

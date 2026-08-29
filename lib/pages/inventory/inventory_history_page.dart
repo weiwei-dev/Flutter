@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:tdesign_flutter/tdesign_flutter.dart';
 import '../../services/db_service.dart';
+import '../../services/export_service.dart';
 import '../../models/inventory_check.dart';
 import '../../utils/category_classifier.dart';
 
@@ -59,6 +60,27 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
       ),
     );
     if (result == true) _load();
+  }
+
+  Future<void> _exportSheet(Map<String, dynamic> sheet) async {
+    final sheetId = sheet['sheet_id'] as String;
+    try {
+      final rows = await DbService.instance.getInventoryCheck(sheetId);
+      final categories = rows.map((r) => r['category'] as String).toList();
+      final quantities = <String, String>{};
+      for (final r in rows) {
+        quantities[r['category'] as String] =
+            (r['stock_quantity'] as String?) ?? '';
+      }
+      await ExportService.instance.exportInventoryCheckFilled(
+        categories,
+        quantities,
+        (sheet['start_date'] as String?) ?? '',
+        (sheet['end_date'] as String?) ?? '',
+      );
+    } catch (e) {
+      if (mounted) TDToast.showText('导出失败: $e', context: context);
+    }
   }
 
   Future<void> _delete(Map<String, dynamic> sheet) async {
@@ -144,11 +166,18 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
+                              icon: const Icon(TDIcons.file_1, size: 20),
+                              tooltip: '导出 Excel',
+                              onPressed: () => _exportSheet(sheet),
+                            ),
+                            IconButton(
                               icon: const Icon(TDIcons.edit, size: 20),
+                              tooltip: '编辑',
                               onPressed: () => _openSheet(sheet),
                             ),
                             IconButton(
                               icon: const Icon(TDIcons.delete, size: 20),
+                              tooltip: '删除',
                               onPressed: () => _delete(sheet),
                             ),
                           ],

@@ -8,6 +8,7 @@ import 'dart:io';
 import '../../../models/procurement.dart';
 import '../../../app/providers/procurement_provider.dart';
 import '../../../services/db_service.dart';
+import '../../../utils/image_utils.dart';
 
 final logger = Logger();
 
@@ -48,6 +49,9 @@ class EntryController extends ChangeNotifier {
   final bool isSupplement;
   DateTime _procurementDate;
 
+  // 采购类型：0=本地采购 1=外地回货 2=本地赊账
+  int _purchaseType = PurchaseType.local;
+
   // Getters
   String get selectedUnit => _selectedUnit;
   File? get imageFile => _imageFile;
@@ -63,6 +67,7 @@ class EntryController extends ChangeNotifier {
   String? get priceError => _priceError;
   bool get isSupplementMode => isSupplement;
   DateTime get procurementDate => _procurementDate;
+  int get purchaseType => _purchaseType;
 
   final List<String> units = const ['件', 'kg', 'g', '个', '箱', '袋', '斤', '盒'];
 
@@ -75,6 +80,12 @@ class EntryController extends ChangeNotifier {
   /// 设置采购日期（用于补单）
   void setProcurementDate(DateTime date) {
     _procurementDate = date;
+    notifyListeners();
+  }
+
+  /// 切换采购类型（0=本地采购 1=外地回货 2=本地赊账）
+  void setPurchaseType(int value) {
+    _purchaseType = value;
     notifyListeners();
   }
 
@@ -269,6 +280,7 @@ class EntryController extends ChangeNotifier {
         remark: remarkController.text,
         isSupplement: isSupplement ? 1 : 0,
         orderTime: isSupplement ? orderTime : null,
+        purchaseType: _purchaseType,
       );
 
       logger.d('Adding record: ${record.category}');
@@ -297,6 +309,7 @@ class EntryController extends ChangeNotifier {
     _imageFile = null;
     _historicalImagePath = null;
     _useHistoricalImage = false;
+    _purchaseType = PurchaseType.local;
     _totalAmount = 0.0;
     _categoryError = null;
     _quantityError = null;
@@ -304,14 +317,21 @@ class EntryController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 选择图片
+  /// 选择图片，压缩后保存到应用持久化目录
   Future<void> pickImage(ImageSource source) async {
     final picker = ImagePicker();
     try {
       final pickedFile = await picker.pickImage(source: source);
       if (pickedFile != null) {
         logger.d('Image picked: ${pickedFile.path}');
-        _imageFile = File(pickedFile.path);
+        final savedFile = await ImageUtils.compressAndSaveImage(
+          File(pickedFile.path),
+        );
+        if (savedFile != null) {
+          _imageFile = savedFile;
+          _useHistoricalImage = false;
+          logger.d('Image saved to persistent path: ${savedFile.path}');
+        }
         notifyListeners();
       } else {
         logger.d('Image picker cancelled');

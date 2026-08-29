@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:tdesign_flutter/tdesign_flutter.dart';
 import '../../components/tab_bar.dart';
 import '../../app/providers/procurement_provider.dart';
+import '../../models/procurement.dart';
 import 'controller/entry_controller.dart';
 import 'widgets/entry_widgets.dart';
 
@@ -289,6 +290,50 @@ class _EntryViewState extends State<_EntryView>
     );
   }
 
+  /// 采购类型单选项
+  Widget _buildTypeOption(
+    BuildContext context,
+    EntryController controller,
+    String text,
+    int type,
+  ) {
+    final selected = controller.purchaseType == type;
+    final selectedColor = _purchaseTypeColor(context, type);
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => controller.setPurchaseType(type),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? selectedColor : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              color: selected ? Colors.white : Colors.grey.shade600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 采购类型选中色
+  Color _purchaseTypeColor(BuildContext context, int type) {
+    switch (type) {
+      case PurchaseType.credit:
+        return const Color(0xFFFFC107); // 琥珀黄：本地赊账
+      case PurchaseType.returnGoods:
+        return const Color(0xFFFF5722); // 深橙红：外地回货
+      default:
+        return TDTheme.of(context).brandNormalColor; // 本地采购
+    }
+  }
+
   Widget _buildBasicInfoSection(EntryController controller) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -317,6 +362,80 @@ class _EntryViewState extends State<_EntryView>
           controller: controller.supplierLocationController,
           placeholder: '如：A区102号',
           leftIcon: TDIcons.location,
+        ),
+        const SizedBox(height: 6),
+
+        // 采购类型选择：本地采购 / 本地赊账 / 外地回货
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    TDIcons.money,
+                    size: 18,
+                    color: controller.purchaseType == PurchaseType.local
+                        ? Colors.grey.shade600
+                        : Colors.orange.shade700,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    PurchaseType.label(controller.purchaseType),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    _buildTypeOption(
+                      context,
+                      controller,
+                      '本地采购',
+                      PurchaseType.local,
+                    ),
+                    _buildTypeOption(
+                      context,
+                      controller,
+                      '本地赊账',
+                      PurchaseType.credit,
+                    ),
+                    _buildTypeOption(
+                      context,
+                      controller,
+                      '外地回货',
+                      PurchaseType.returnGoods,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                controller.purchaseType == PurchaseType.local
+                    ? '本地现场采购，可在每日清账页批量清账'
+                    : '货款未结，之后在清账页/欠款管理页单独结账',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey.shade500,
+                ),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 6),
       ],

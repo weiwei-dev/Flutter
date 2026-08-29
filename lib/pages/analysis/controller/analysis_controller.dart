@@ -64,6 +64,12 @@ class AnalysisController extends ChangeNotifier {
   // 大类统计
   List<GroupStat> _groupStats = [];
 
+  // 欠款统计（统计日期范围内）
+  double _returnGoodsTotal = 0.0; // 外地回货总额
+  double _returnGoodsDebt = 0.0; // 回货未结账金额（欠款）
+  double _creditTotal = 0.0; // 本地赊账总额
+  double _creditDebt = 0.0; // 赊账未结账金额（欠款）
+
   // 缓存
   final Map<String, List<ProcurementRecord>> _recordsCache = {};
   Timer? _cacheClearTimer;
@@ -81,6 +87,16 @@ class AnalysisController extends ChangeNotifier {
   List<CategoryStat> get categoryStats => _categoryStats;
   List<DailyStat> get dailyStats => _dailyStats;
   List<GroupStat> get groupStats => _groupStats;
+  double get returnGoodsTotal => _returnGoodsTotal;
+  double get returnGoodsDebt => _returnGoodsDebt;
+  double get creditTotal => _creditTotal;
+  double get creditDebt => _creditDebt;
+  double get totalDebt => _returnGoodsDebt + _creditDebt;
+  int get returnGoodsCount => _records
+      .where((r) => r.purchaseType == PurchaseType.returnGoods)
+      .length;
+  int get creditCount =>
+      _records.where((r) => r.purchaseType == PurchaseType.credit).length;
 
   String get startDateStr => DateFormat('yyyy-MM-dd').format(_startDate);
   String get endDateStr => DateFormat('yyyy-MM-dd').format(_endDate);
@@ -177,6 +193,10 @@ class AnalysisController extends ChangeNotifier {
       _minAmount = 0.0;
       _categoryStats = [];
       _dailyStats = [];
+      _returnGoodsTotal = 0.0;
+      _returnGoodsDebt = 0.0;
+      _creditTotal = 0.0;
+      _creditDebt = 0.0;
       return;
     }
 
@@ -222,6 +242,7 @@ class AnalysisController extends ChangeNotifier {
 
       // 计算大类统计（在主线程中计算，因为需要访问 CategoryClassifier）
       _calculateGroupStatsSync();
+      _calculateReturnGoodsStats();
     } catch (e) {
       logger.e('Error calculating stats: $e');
       // 出错时回退到同步计算
@@ -235,6 +256,33 @@ class AnalysisController extends ChangeNotifier {
     _calculateCategoryStatsSync();
     _calculateDailyStatsSync();
     _calculateGroupStatsSync();
+    _calculateReturnGoodsStats();
+  }
+
+  /// 计算欠款统计（外地回货 + 本地赊账，各自的总额与未结账欠款）
+  void _calculateReturnGoodsStats() {
+    final returnRecords = _records
+        .where((r) => r.purchaseType == PurchaseType.returnGoods)
+        .toList();
+    final creditRecords = _records
+        .where((r) => r.purchaseType == PurchaseType.credit)
+        .toList();
+
+    _returnGoodsTotal = returnRecords.fold(
+      0.0,
+      (sum, r) => sum + r.totalAmount,
+    );
+    _returnGoodsDebt = returnRecords
+        .where((r) => r.settleStatus == 0)
+        .fold(0.0, (sum, r) => sum + r.totalAmount);
+
+    _creditTotal = creditRecords.fold(
+      0.0,
+      (sum, r) => sum + r.totalAmount,
+    );
+    _creditDebt = creditRecords
+        .where((r) => r.settleStatus == 0)
+        .fold(0.0, (sum, r) => sum + r.totalAmount);
   }
 
   /// 计算基础统计数据

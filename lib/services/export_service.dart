@@ -249,4 +249,83 @@ class ExportService {
     final xFile = XFile(filePath, name: fileName);
     await Share.shareXFiles([xFile], text: '库存盘点表');
   }
+
+  /// 导出已填写库存数量的盘点表（历史记录导出）
+  /// [categories] 为盘点品类清单，[quantities] 为品类对应的库存数量
+  Future<void> exportInventoryCheckFilled(
+    List<String> categories,
+    Map<String, String> quantities,
+    String startDate,
+    String endDate,
+  ) async {
+    const int groups = 3;
+
+    var excel = Excel.createExcel();
+    var sheet = excel.sheets.values.first;
+
+    final headerStyle = CellStyle(
+      bold: true,
+      backgroundColorHex: 'FFE0E0E0',
+      horizontalAlign: HorizontalAlign.Center,
+    );
+    final nameStyle = CellStyle(textWrapping: TextWrapping.WrapText);
+
+    final header = <String>[];
+    for (int g = 0; g < groups; g++) {
+      header.add('产品名称');
+      header.add('库存数量');
+    }
+    sheet.appendRow(header);
+
+    for (int c = 0; c < header.length; c++) {
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: c, rowIndex: 0))
+        ..cellStyle = headerStyle;
+      sheet.setColWidth(c, c % 2 == 0 ? 22.0 : 10.0);
+    }
+
+    final total = categories.length;
+    final rowsPerCol = (total / groups).ceil();
+
+    for (int r = 0; r < rowsPerCol; r++) {
+      final row = <dynamic>[];
+      for (int g = 0; g < groups; g++) {
+        final index = g * rowsPerCol + r;
+        if (index < total) {
+          final category = categories[index];
+          row.add(category);
+          row.add(quantities[category] ?? '');
+        } else {
+          row.add('');
+          row.add('');
+        }
+      }
+      sheet.appendRow(row);
+
+      for (int g = 0; g < groups; g++) {
+        final col = g * 2;
+        sheet
+            .cell(
+              CellIndex.indexByColumnRow(
+                columnIndex: col,
+                rowIndex: r + 1,
+              ),
+            )
+            .cellStyle = nameStyle;
+      }
+    }
+
+    final excelBytes = excel.encode();
+    if (excelBytes == null) {
+      throw Exception('Excel编码失败');
+    }
+
+    final tempDir = await getTemporaryDirectory();
+    final fileName = '库存盘点表_已填_${startDate}至$endDate.xlsx';
+    final filePath = '${tempDir.path}/$fileName';
+    final file = File(filePath);
+    await file.writeAsBytes(excelBytes);
+
+    final xFile = XFile(filePath, name: fileName);
+    await Share.shareXFiles([xFile], text: '库存盘点表（已填写）');
+  }
 }

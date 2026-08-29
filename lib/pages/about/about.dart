@@ -301,6 +301,15 @@ class _AboutPageState extends State<AboutPage>
                                     context, '/inventory_history'),
                                 color: const Color(0xFF00C8A0),
                               ),
+                              const Divider(height: 16),
+                              _buildQuickActionItem(
+                                icon: TDIcons.money,
+                                title: '欠款管理',
+                                subtitle: '赊账/回货欠款汇总与批量结账',
+                                onTap: () =>
+                                    Navigator.pushNamed(context, '/return_goods'),
+                                color: const Color(0xFFFF9800),
+                              ),
                             ],
                           ),
                         ),

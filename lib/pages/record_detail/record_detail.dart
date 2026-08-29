@@ -6,6 +6,7 @@ import 'package:tdesign_flutter/tdesign_flutter.dart';
 import '../../core/constants/app_constants.dart';
 import '../../models/procurement.dart';
 import '../../services/db_service.dart';
+import '../../utils/image_utils.dart';
 import '../settle/settle.dart';
 
 /// 采购记录详情/编辑页
@@ -261,7 +262,11 @@ class _RecordDetailPageState extends State<RecordDetailPage> {
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  isSettled ? '已清账' : '待清账',
+                  record.isDebtRecord
+                      ? (isSettled
+                          ? '${_shortTypeLabel(record.purchaseType)}已结账'
+                          : '${_shortTypeLabel(record.purchaseType)}待结账')
+                      : (isSettled ? '已清账' : '待清账'),
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,
@@ -338,7 +343,117 @@ class _RecordDetailPageState extends State<RecordDetailPage> {
           icon: TDIcons.location,
           hintText: '如：A区102号',
         ),
+        if (_isEditing) _buildReturnGoodsSwitch(),
       ],
+    );
+  }
+
+  /// 采购类型选中色
+  Color _purchaseTypeColor(int type) {
+    switch (type) {
+      case PurchaseType.credit:
+        return const Color(0xFFFFC107); // 琥珀黄：本地赊账
+      case PurchaseType.returnGoods:
+        return const Color(0xFFFF5722); // 深橙红：外地回货
+      default:
+        return TDTheme.of(context).brandNormalColor; // 本地采购
+    }
+  }
+
+  /// 采购类型短标签
+  String _shortTypeLabel(int type) {
+    switch (type) {
+      case PurchaseType.returnGoods:
+        return '回货';
+      case PurchaseType.credit:
+        return '赊账';
+      default:
+        return '采购';
+    }
+  }
+
+  /// 采购类型选择（仅编辑模式可切换）
+  Widget _buildReturnGoodsSwitch() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppConstants.smallRadius),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                TDIcons.money,
+                size: 18,
+                color: _controller.purchaseType == PurchaseType.local
+                    ? AppColors.textSecondary
+                    : Colors.orange.shade700,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                PurchaseType.label(_controller.purchaseType),
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                _buildTypeOption('本地采购', PurchaseType.local),
+                _buildTypeOption('本地赊账', PurchaseType.credit),
+                _buildTypeOption('外地回货', PurchaseType.returnGoods),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _controller.purchaseType == PurchaseType.local
+                ? '本地现场采购，可在每日清账页批量清账'
+                : '货款未结，之后在清账页/欠款管理页单独结账',
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 采购类型单选项
+  Widget _buildTypeOption(String text, int type) {
+    final selected = _controller.purchaseType == type;
+    final selectedColor = _purchaseTypeColor(type);
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => _controller.setPurchaseType(type),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? selectedColor : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              color: selected ? Colors.white : Colors.grey.shade600,
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -762,6 +877,8 @@ class RecordDetailController extends ChangeNotifier {
   final serviceFeeController = TextEditingController();
   final remarkController = TextEditingController();
 
+  int _purchaseType = PurchaseType.local;
+
   String _selectedUnit = '件';
 
   ProcurementRecord? get record => _record;
@@ -769,6 +886,13 @@ class RecordDetailController extends ChangeNotifier {
   File? get imageFile => _imageFile;
   double get totalAmount => _totalAmount;
   String get selectedUnit => _selectedUnit;
+  int get purchaseType => _purchaseType;
+
+  /// 切换采购类型（0=本地采购 1=外地回货 2=本地赊账）
+  void setPurchaseType(int value) {
+    _purchaseType = value;
+    notifyListeners();
+  }
 
   RecordDetailController({required this.recordId});
 
@@ -792,6 +916,7 @@ class RecordDetailController extends ChangeNotifier {
         remarkController.text = _record!.remark ?? '';
         _selectedUnit = _record!.unit;
         _totalAmount = _record!.totalAmount;
+        _purchaseType = _record!.purchaseType;
 
         // 加载图片
         if (_record!.imagePath != null && _record!.imagePath!.isNotEmpty) {
@@ -824,7 +949,12 @@ class RecordDetailController extends ChangeNotifier {
     try {
       final pickedFile = await picker.pickImage(source: source);
       if (pickedFile != null) {
-        _imageFile = File(pickedFile.path);
+        final savedFile = await ImageUtils.compressAndSaveImage(
+          File(pickedFile.path),
+        );
+        if (savedFile != null) {
+          _imageFile = savedFile;
+        }
         notifyListeners();
       }
     } catch (e) {
@@ -861,6 +991,10 @@ class RecordDetailController extends ChangeNotifier {
         settleStatus: _record!.settleStatus,
         settleTime: _record!.settleTime,
         remark: remarkController.text.isEmpty ? null : remarkController.text,
+        // 保留补单与采购类型标记，避免编辑时丢失
+        isSupplement: _record!.isSupplement,
+        orderTime: _record!.orderTime,
+        purchaseType: _purchaseType,
       );
 
       await DbService.instance.updateProcurementRecord(updatedRecord);

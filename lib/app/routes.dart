@@ -14,6 +14,7 @@ import '../pages/supplement/supplement_list.dart';
 import '../pages/inventory/inventory_select_page.dart';
 import '../pages/inventory/inventory_fill_page.dart';
 import '../pages/inventory/inventory_history_page.dart';
+import '../pages/return_goods/return_goods_page.dart';
 
 class AppRoutes {
   static const String home = '/';
@@ -31,6 +32,7 @@ class AppRoutes {
   static const String inventorySelect = '/inventory_select';
   static const String inventoryFill = '/inventory_fill';
   static const String inventoryHistory = '/inventory_history';
+  static const String returnGoods = '/return_goods';
 
   static Map<String, WidgetBuilder> routes = {
     home: (context) => const HomePage(),
@@ -52,5 +54,6 @@ class AppRoutes {
           endDate: '',
         ),
     inventoryHistory: (context) => const InventoryHistoryPage(),
+    returnGoods: (context) => const ReturnGoodsPage(),
   };
 }

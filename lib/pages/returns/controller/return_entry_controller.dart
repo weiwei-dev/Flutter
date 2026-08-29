@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../../../models/return_record.dart';
 import '../../../utils/db.dart';
+import '../../../utils/image_utils.dart';
 
 /// 退货录入页面控制器 - 使用 Provider 管理状态
 class ReturnEntryController extends ChangeNotifier {
@@ -224,14 +225,19 @@ class ReturnEntryController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 选择图片
+  /// 选择图片，压缩后保存到应用持久化目录
   Future<void> pickImage() async {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
 
     if (pickedFile != null) {
-      _imageFile = File(pickedFile.path);
-      notifyListeners();
+      final savedFile = await ImageUtils.compressAndSaveImage(
+        File(pickedFile.path),
+      );
+      if (savedFile != null) {
+        _imageFile = savedFile;
+        notifyListeners();
+      }
     }
   }
 

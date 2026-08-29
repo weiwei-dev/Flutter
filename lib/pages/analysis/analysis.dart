@@ -185,6 +185,34 @@ class _AnalysisView extends StatelessWidget {
                   icon: TDIcons.chart_maximum,
                   color: const Color(0xFFEF5350),
                 ),
+                if (controller.creditCount > 0) ...[
+                  StatCard(
+                    title: '本地赊账',
+                    value: '¥${controller.creditTotal.toStringAsFixed(0)}',
+                    icon: TDIcons.location,
+                    color: const Color(0xFFFFA726),
+                  ),
+                  StatCard(
+                    title: '赊账欠款',
+                    value: '¥${controller.creditDebt.toStringAsFixed(0)}',
+                    icon: TDIcons.money,
+                    color: const Color(0xFF8D6E63),
+                  ),
+                ],
+                if (controller.returnGoodsCount > 0) ...[
+                  StatCard(
+                    title: '外地回货',
+                    value: '¥${controller.returnGoodsTotal.toStringAsFixed(0)}',
+                    icon: TDIcons.location,
+                    color: const Color(0xFFFFA726),
+                  ),
+                  StatCard(
+                    title: '回货欠款',
+                    value: '¥${controller.returnGoodsDebt.toStringAsFixed(0)}',
+                    icon: TDIcons.money,
+                    color: const Color(0xFF8D6E63),
+                  ),
+                ],
               ],
             ),
           ],

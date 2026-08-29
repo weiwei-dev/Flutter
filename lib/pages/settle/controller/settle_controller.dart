@@ -38,6 +38,8 @@ class SettleController extends ChangeNotifier {
   double _selectedAmount = 0.0;
   double _settledAmount = 0.0; // 已清账金额
   double _returnTotal = 0.0; // 退货总额
+  double _returnGoodsDebt = 0.0; // 外地回货欠款（所有未结账回货累计）
+  double _creditDebt = 0.0; // 本地赊账欠款（所有未结账赊账累计）
 
   // 今日财务数据
   DailyFinance _dailyFinance = DailyFinance(
@@ -57,20 +59,64 @@ class SettleController extends ChangeNotifier {
   /// 已清账记录数
   int get settledCount => _records.where((r) => r.settleStatus == 1).length;
 
+  /// 外地回货欠款（全部未结账回货累计，不局限于当天）
+  double get returnGoodsDebt => _returnGoodsDebt;
+
+  /// 本地赊账欠款（全部未结账赊账累计，不局限于当天）
+  double get creditDebt => _creditDebt;
+
+  /// 总欠款（回货 + 赊账）
+  double get totalDebt => _returnGoodsDebt + _creditDebt;
+
+  /// 待清账的本地采购记录
+  List<ProcurementRecord> get unsettledLocalRecords => _records
+      .where((r) => r.settleStatus == 0 && r.purchaseType == PurchaseType.local)
+      .toList();
+
+  /// 待结账的本地赊账记录
+  List<ProcurementRecord> get unsettledCreditRecords => _records
+      .where((r) => r.settleStatus == 0 && r.purchaseType == PurchaseType.credit)
+      .toList();
+
+  /// 待结账的外地回货记录
+  List<ProcurementRecord> get unsettledReturnRecords => _records
+      .where(
+        (r) => r.settleStatus == 0 && r.purchaseType == PurchaseType.returnGoods,
+      )
+      .toList();
+
+  /// 已清账的本地采购记录
+  List<ProcurementRecord> get settledLocalRecords => _records
+      .where((r) => r.settleStatus == 1 && r.purchaseType == PurchaseType.local)
+      .toList();
+
+  /// 已结账的欠款记录（本地赊账 + 外地回货）
+  List<ProcurementRecord> get settledDebtRecords => _records
+      .where((r) => r.settleStatus == 1 && r.isDebtRecord)
+      .toList();
+
   /// 是否为空
   bool get isEmpty => _records.isEmpty;
 
   /// 是否有选中
   bool get hasSelection => _selectedRecordIds.isNotEmpty;
 
-  /// 是否全选
-  bool get isAllSelected {
-    final unsettledIds = _records
-        .where((record) => record.settleStatus == 0)
-        .map((record) => record.id!)
-        .toList();
-    return _selectedRecordIds.length == unsettledIds.length &&
-        unsettledIds.isNotEmpty;
+  /// 本地采购是否全选
+  bool get isAllLocalSelected {
+    final ids = unsettledLocalRecords.map((r) => r.id!).toList();
+    return ids.isNotEmpty && ids.every((id) => _selectedRecordIds.contains(id));
+  }
+
+  /// 外地回货是否全选
+  bool get isAllReturnSelected {
+    final ids = unsettledReturnRecords.map((r) => r.id!).toList();
+    return ids.isNotEmpty && ids.every((id) => _selectedRecordIds.contains(id));
+  }
+
+  /// 本地赊账是否全选
+  bool get isAllCreditSelected {
+    final ids = unsettledCreditRecords.map((r) => r.id!).toList();
+    return ids.isNotEmpty && ids.every((id) => _selectedRecordIds.contains(id));
   }
 
   /// 获取未清账记录
@@ -98,16 +144,29 @@ class SettleController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 全选/取消全选
-  void selectAll() {
-    final unsettledIds = _records
-        .where((record) => record.settleStatus == 0)
-        .map((record) => record.id!)
-        .toList();
-    if (_selectedRecordIds.length == unsettledIds.length) {
-      _selectedRecordIds.clear();
+  /// 全选/取消全选本地采购
+  void selectAllLocal() {
+    _toggleAll(unsettledLocalRecords, isAllLocalSelected);
+  }
+
+  /// 全选/取消全选外地回货
+  void selectAllReturn() {
+    _toggleAll(unsettledReturnRecords, isAllReturnSelected);
+  }
+
+  /// 全选/取消全选本地赊账
+  void selectAllCredit() {
+    _toggleAll(unsettledCreditRecords, isAllCreditSelected);
+  }
+
+  void _toggleAll(List<ProcurementRecord> records, bool allSelected) {
+    final ids = records.map((r) => r.id!).toList();
+    if (allSelected) {
+      _selectedRecordIds.removeWhere((id) => ids.contains(id));
     } else {
-      _selectedRecordIds = List.from(unsettledIds);
+      for (final id in ids) {
+        if (!_selectedRecordIds.contains(id)) _selectedRecordIds.add(id);
+      }
     }
     _calculateSelectedAmount();
     notifyListeners();
@@ -215,26 +274,26 @@ class SettleController extends ChangeNotifier {
   /// 加载今日财务数据
   Future<void> _loadDailyFinance() async {
     final finance = await DbService.instance.getDailyFinance(_selectedDate);
-    // 如果没有财务数据，默认入账10000
-    final hasData =
-        finance.isNotEmpty &&
-        (finance['income'] != null || finance['expense'] != null);
+    // 判断数据库里是否真实存在该日期的财务记录（默认值也会返回非空 map，所以用 hasDailyFinance 判断）
+    final hasData = await DbService.instance.hasDailyFinance(_selectedDate);
+    // 最终使用的入账金额：有真实记录用记录值，没有则用默认 10000
+    final income = hasData
+        ? ((finance['income'] as num?)?.toDouble() ?? 0.0)
+        : 10000.0; // 默认入账10000
     // 结余实时计算：入账 - 出账 + 退货（只算已清账的）
-    final balance = _dailyFinance.income - _settledAmount + _returnTotal;
+    final balance = income - _settledAmount + _returnTotal;
     _dailyFinance = DailyFinance(
       date: _selectedDate,
-      income: hasData
-          ? ((finance['income'] as num?)?.toDouble() ?? 0.0)
-          : 10000.0, // 默认入账10000
+      income: income,
       expense: (finance['expense'] as num?)?.toDouble() ?? 0.0,
       balance: balance,
       remark: finance['remark'] as String? ?? '',
     );
-    // 如果是新日期（没有数据），保存默认入账到数据库
+    // 如果是新日期（没有数据），把默认入账写入数据库，确保入账/出账/结余都有持久化记录
     if (!hasData) {
       await DbService.instance.updateDailyFinance(
         _selectedDate,
-        10000.0,
+        income,
         0.0,
         balance,
         '默认入账',
@@ -272,6 +331,12 @@ class SettleController extends ChangeNotifier {
     );
   }
 
+  /// 加载欠款（回货 + 赊账，全部未结账累计）
+  Future<void> _loadReturnGoodsDebt() async {
+    _returnGoodsDebt = await DbService.instance.getReturnGoodsDebt();
+    _creditDebt = await DbService.instance.getCreditDebt();
+  }
+
   /// 加载退货记录
   Future<void> _loadReturnRecords() async {
     final startDate = '$_selectedDate 00:00:00';
@@ -287,8 +352,13 @@ class SettleController extends ChangeNotifier {
     await provider.loadRecords(_selectedDate);
     _records = provider.records;
     _totalAmount = _records.fold(0, (sum, record) => sum + record.totalAmount);
+    // 默认只勾选本地采购的未清账记录；赊账/回货需手动勾选后才结账，避免误清账
     _selectedRecordIds = _records
-        .where((record) => record.settleStatus == 0)
+        .where(
+          (record) =>
+              record.settleStatus == 0 &&
+              record.purchaseType == PurchaseType.local,
+        )
         .map((record) => record.id!)
         .toList();
     _calculateSelectedAmount();
@@ -296,6 +366,8 @@ class SettleController extends ChangeNotifier {
     // 加载退货记录并计算退货总额
     await _loadReturnRecords();
     _calculateReturnTotal();
+    // 加载外地回货欠款
+    await _loadReturnGoodsDebt();
     // 加载今日财务数据
     await _loadDailyFinance();
     // 使用 SchedulerBinding 延迟通知，避免在构建期间调用 setState

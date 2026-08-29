@@ -184,9 +184,88 @@ class _SettleViewState extends State<_SettleView>
                   balance: controller.todayBalance,
                   onIncomeTap: () => _showIncomeInputDialog(controller),
                 ),
+                if (controller.totalDebt > 0) ...[
+                  const SizedBox(height: 10),
+                  _buildDebtCard(controller),
+                ],
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  /// 欠款卡片（回货 + 赊账，累计未结账，点击去欠款管理页结账）
+  Widget _buildDebtCard(SettleController controller) {
+    return GestureDetector(
+      onTap: () async {
+        await Navigator.pushNamed(context, '/return_goods');
+        if (context.mounted) {
+          final provider = context.read<ProcurementProvider>();
+          await controller.loadData(provider);
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                const Icon(TDIcons.money, size: 18, color: Colors.white),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    '累计欠款（未结账）',
+                    style: TextStyle(fontSize: 13, color: Colors.white),
+                  ),
+                ),
+                Text(
+                  '¥${controller.totalDebt.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 2),
+                const Icon(TDIcons.chevron_right, size: 16, color: Colors.white),
+              ],
+            ),
+            if (controller.returnGoodsDebt > 0 ||
+                controller.creditDebt > 0) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  if (controller.creditDebt > 0)
+                    Expanded(
+                      child: Text(
+                        '赊账 ¥${controller.creditDebt.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.white.withValues(alpha: 0.9),
+                        ),
+                      ),
+                    ),
+                  if (controller.returnGoodsDebt > 0)
+                    Expanded(
+                      child: Text(
+                        '回货 ¥${controller.returnGoodsDebt.toStringAsFixed(2)}',
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.white.withValues(alpha: 0.9),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ],
         ),
       ),
     );
@@ -416,60 +495,78 @@ class _SettleViewState extends State<_SettleView>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (controller.unsettledCount > 0) ...[
+              // 本地采购：待清账
+              if (controller.unsettledLocalRecords.isNotEmpty) ...[
                 _buildSectionHeader(
                   '待清账记录',
-                  controller.isAllSelected ? '取消全选' : '全选',
-                  controller.isAllSelected
+                  controller.isAllLocalSelected ? '取消全选' : '全选',
+                  controller.isAllLocalSelected
                       ? TDIcons.check_rectangle
                       : TDIcons.rectangle,
-                  () => controller.selectAll(),
+                  () => controller.selectAllLocal(),
                 ),
                 const SizedBox(height: 10),
-                ...controller.unsettledRecords.map(
-                  (record) => RecordCard(
-                    record: record,
-                    isSettled: false,
-                    isSelected: controller.isSelected(record.id!),
-                    onTap: () async {
-                      // 点击卡片跳转到详情页编辑
-                      final result = await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              RecordDetailPage(recordId: record.id!),
-                        ),
-                      );
-                      // 如果返回结果需要刷新，则重新加载数据
-                      if (result != null &&
-                          result is Map &&
-                          result['refresh'] == true &&
-                          mounted) {
-                        if (context.mounted) {
-                          final provider = context.read<ProcurementProvider>();
-                          await controller.loadData(provider);
-                        }
-                      }
-                    },
-                    onCheckboxTap: () =>
-                        controller.toggleRecordSelection(record.id!),
-                    onDelete: () =>
-                        _showDeleteConfirmDialog(context, controller, record),
-                  ),
+                ...controller.unsettledLocalRecords.map(
+                  (record) => _buildUnsettledCard(context, controller, record),
                 ),
                 const SizedBox(height: 16),
               ],
-              if (controller.settledCount > 0) ...[
+              // 本地赊账：待结账
+              if (controller.unsettledCreditRecords.isNotEmpty) ...[
+                _buildDebtSectionHeader(
+                  controller,
+                  title: '本地赊账（待结账）',
+                  tagText: '赊账',
+                  allSelected: controller.isAllCreditSelected,
+                  onSelectAll: controller.selectAllCredit,
+                ),
+                const SizedBox(height: 10),
+                ...controller.unsettledCreditRecords.map(
+                  (record) => _buildUnsettledCard(context, controller, record),
+                ),
+                const SizedBox(height: 16),
+              ],
+              // 外地回货：待结账
+              if (controller.unsettledReturnRecords.isNotEmpty) ...[
+                _buildDebtSectionHeader(
+                  controller,
+                  title: '外地回货（待结账）',
+                  tagText: '回货',
+                  allSelected: controller.isAllReturnSelected,
+                  onSelectAll: controller.selectAllReturn,
+                ),
+                const SizedBox(height: 10),
+                ...controller.unsettledReturnRecords.map(
+                  (record) => _buildUnsettledCard(context, controller, record),
+                ),
+                const SizedBox(height: 16),
+              ],
+              // 本地采购：已清账
+              if (controller.settledLocalRecords.isNotEmpty) ...[
                 _buildSectionTitle('已清账记录 (点击可取消清账)'),
                 const SizedBox(height: 10),
-                ...controller.settledRecords.map(
+                ...controller.settledLocalRecords.map(
                   (record) => RecordCard(
                     record: record,
                     isSettled: true,
                     isSelected: false,
                     onCancelSettle: () =>
                         _showCancelSettleDialog(context, controller, record),
-                    // 已清账记录不显示删除按钮，必须先取消清账才能删除
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+              // 欠款类：已结账
+              if (controller.settledDebtRecords.isNotEmpty) ...[
+                _buildSectionTitle('已结账欠款 (点击可取消结账)'),
+                const SizedBox(height: 10),
+                ...controller.settledDebtRecords.map(
+                  (record) => RecordCard(
+                    record: record,
+                    isSettled: true,
+                    isSelected: false,
+                    onCancelSettle: () =>
+                        _showCancelSettleDialog(context, controller, record),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -480,6 +577,87 @@ class _SettleViewState extends State<_SettleView>
           ),
         ),
       ),
+    );
+  }
+
+  /// 未清账记录卡片（普通采购与外地回货共用）
+  Widget _buildUnsettledCard(
+    BuildContext context,
+    SettleController controller,
+    ProcurementRecord record,
+  ) {
+    return RecordCard(
+      record: record,
+      isSettled: false,
+      isSelected: controller.isSelected(record.id!),
+      onTap: () => _openRecordDetail(context, controller, record),
+      onCheckboxTap: () => controller.toggleRecordSelection(record.id!),
+      onDelete: () => _showDeleteConfirmDialog(context, controller, record),
+    );
+  }
+
+  /// 打开记录详情，返回后按需刷新
+  Future<void> _openRecordDetail(
+    BuildContext context,
+    SettleController controller,
+    ProcurementRecord record,
+  ) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => RecordDetailPage(recordId: record.id!),
+      ),
+    );
+    if (result != null &&
+        result is Map &&
+        result['refresh'] == true &&
+        context.mounted) {
+      final provider = context.read<ProcurementProvider>();
+      await controller.loadData(provider);
+    }
+  }
+
+  /// 欠款类分区标题（本地赊账 / 外地回货）
+  Widget _buildDebtSectionHeader(
+    SettleController controller, {
+    required String title,
+    required String tagText,
+    required bool allSelected,
+    required VoidCallback onSelectAll,
+  }) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: tagText == '赊账'
+                ? const Color(0xFFFFC107)
+                : const Color(0xFFFF5722),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            tagText,
+            style: TextStyle(
+              fontSize: 11,
+              color: tagText == '赊账' ? Colors.black87 : Colors.white,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          title,
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+        ),
+        const Spacer(),
+        TDButton(
+          text: allSelected ? '取消全选' : '全选',
+          size: TDButtonSize.extraSmall,
+          type: TDButtonType.text,
+          icon: allSelected ? TDIcons.check_rectangle : TDIcons.rectangle,
+          onTap: onSelectAll,
+        ),
+      ],
     );
   }
 

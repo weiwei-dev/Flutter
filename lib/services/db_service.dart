@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import '../utils/db.dart';
 import '../models/procurement.dart';
 import '../models/return_record.dart';
@@ -91,6 +92,11 @@ class DbService {
     return await DatabaseHelper.instance.getDailyFinance(date);
   }
 
+  /// 检查某日是否有财务记录
+  Future<bool> hasDailyFinance(String date) async {
+    return await DatabaseHelper.instance.hasDailyFinance(date);
+  }
+
   Future<void> updateDailyFinance(
     String date,
     double income,
@@ -110,6 +116,35 @@ class DbService {
   /// 根据品类获取最近一条采购记录（用于智能回填）
   Future<ProcurementRecord?> getLastRecordByCategory(String category) async {
     return await DatabaseHelper.instance.getLastRecordByCategory(category);
+  }
+
+  /// 获取欠款类记录（purchaseType 为 null 表示回货+赊账，settleStatus 为 null 表示全部）
+  Future<List<ProcurementRecord>> getDebtRecords({
+    int? purchaseType,
+    int? settleStatus,
+  }) async {
+    return await DatabaseHelper.instance.getDebtRecords(
+      purchaseType: purchaseType,
+      settleStatus: settleStatus,
+    );
+  }
+
+  /// 外地回货欠款总额（未结账回货金额合计）
+  Future<double> getReturnGoodsDebt() async {
+    final records = await DatabaseHelper.instance.getDebtRecords(
+      purchaseType: PurchaseType.returnGoods,
+      settleStatus: 0,
+    );
+    return records.fold<double>(0.0, (sum, r) => sum + r.totalAmount);
+  }
+
+  /// 本地赊账欠款总额（未结账赊账金额合计）
+  Future<double> getCreditDebt() async {
+    final records = await DatabaseHelper.instance.getDebtRecords(
+      purchaseType: PurchaseType.credit,
+      settleStatus: 0,
+    );
+    return records.fold<double>(0.0, (sum, r) => sum + r.totalAmount);
   }
 
   /// 获取指定日期范围内的退货记录
