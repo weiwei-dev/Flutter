@@ -417,6 +417,12 @@ class MemoryDatabase {
     String createdAt, {
     Map<String, String>? quantities,
   }) async {
+    // 与 SQLite 版一致：覆盖保存时沿用首次创建时间，只刷新 updated_at
+    final oldRows = _inventoryChecks[sheetId];
+    final effectiveCreatedAt =
+        (oldRows != null && oldRows.isNotEmpty)
+            ? (oldRows.first['created_at'] as String? ?? createdAt)
+            : createdAt;
     final rows = categories
         .map(
           (c) => {
@@ -425,7 +431,7 @@ class MemoryDatabase {
             'stock_quantity': quantities?[c] ?? '',
             'start_date': startDate,
             'end_date': endDate,
-            'created_at': createdAt,
+            'created_at': effectiveCreatedAt,
             'updated_at': createdAt,
           },
         )
@@ -1131,6 +1137,11 @@ class DatabaseHelper {
   // ===== 库存盘点记录 CRUD =====
 
   /// 保存一份盘点（批量插入品类行）。若 sheetId 已存在则先删除旧数据。
+  ///
+  /// 重要：这里是「先删后插」的覆盖保存，所以删除前会先读出该 sheetId 原有的
+  /// created_at 并沿用，避免每次编辑都把创建时间刷新成当前时间
+  ///（否则历史列表按 created_at DESC 排序时，编辑过的记录会跳到最前面）。
+  /// updated_at 则记录本次保存时间。
   Future<void> saveInventoryCheck(
     String sheetId,
     List<String> categories,
@@ -1151,6 +1162,18 @@ class DatabaseHelper {
       return;
     }
     Database db = await instance.database;
+    // 沿用首次创建时间，保证编辑不会改变记录的历史位置
+    final existing = await db.query(
+      'inventory_checks',
+      columns: ['created_at'],
+      where: 'sheet_id = ?',
+      whereArgs: [sheetId],
+      limit: 1,
+    );
+    final effectiveCreatedAt = existing.isNotEmpty
+        ? (existing.first['created_at'] as String? ?? createdAt)
+        : createdAt;
+
     await db.delete(
       'inventory_checks',
       where: 'sheet_id = ?',
@@ -1164,7 +1187,7 @@ class DatabaseHelper {
         'stock_quantity': quantities?[category] ?? '',
         'start_date': startDate,
         'end_date': endDate,
-        'created_at': createdAt,
+        'created_at': effectiveCreatedAt,
         'updated_at': createdAt,
       });
     }
@@ -1194,7 +1217,8 @@ class DatabaseHelper {
     );
   }
 
-  /// 获取某份盘点的所有品类与库存数量
+  /// 获取某份盘点的所有品类与库存数量。
+  /// 按 id 升序（即保存时的原始顺序）返回，保证编辑页、导出表与首次导出的空表行序一致。
   Future<List<Map<String, dynamic>>> getInventoryCheck(String sheetId) async {
     if (kIsWeb) {
       return await MemoryDatabase.instance.getInventoryCheck(sheetId);
@@ -1204,7 +1228,7 @@ class DatabaseHelper {
       'inventory_checks',
       where: 'sheet_id = ?',
       whereArgs: [sheetId],
-      orderBy: 'category ASC',
+      orderBy: 'id ASC',
     );
     return maps;
   }

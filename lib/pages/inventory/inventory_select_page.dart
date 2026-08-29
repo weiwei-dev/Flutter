@@ -6,6 +6,7 @@ import '../../services/db_service.dart';
 import '../../services/export_service.dart';
 import '../../core/widgets/date_picker.dart';
 import '../../utils/category_classifier.dart';
+import '../../utils/category_group_override.dart';
 import 'inventory_fill_page.dart';
 
 /// 库存盘点 - 独立页面
@@ -27,18 +28,17 @@ class _InventorySelectPageState extends State<InventorySelectPage> {
 
   List<String> _allCategories = [];
   final Set<String> _selected = {};
-  // 持久化：用户曾经取消勾选过的品类（下架/不需要）
-  final Set<String> _excluded = {};
-  // 持久化：用户跨数据源/日期明确选中的品类，切换时用于恢复选择
-  final Set<String> _persistedSelection = {};
+  // 持久化：用户主动取消勾选的品类（下架/不参与盘点）。
+  // 只记录「不想要」，而不是记录「想要」，这样新进货的品类会自动进入默认勾选，
+  // 也不会出现「点了全选却仍有品类没被选中」的情况。
+  final Set<String> _deselected = {};
   // 用户手动新增的品类（可跨会话保留）
   final Set<String> _customCategories = {};
 
   bool _loading = false;
   String _keyword = '';
 
-  static const String _excludedKey = 'inventory_excluded_categories';
-  static const String _selectionKey = 'inventory_persisted_selection';
+  static const String _deselectedKey = 'inventory_deselected_categories';
   static const String _customKey = 'inventory_custom_categories';
 
   @override
@@ -48,8 +48,7 @@ class _InventorySelectPageState extends State<InventorySelectPage> {
     // 默认近10天：今天及前9天
     _endDate = now;
     _startDate = now.subtract(const Duration(days: 9));
-    _loadExcluded();
-    _loadPersistedSelection();
+    _loadDeselected();
     _loadCustomCategories();
     _loadCategories();
   }
@@ -57,35 +56,36 @@ class _InventorySelectPageState extends State<InventorySelectPage> {
   String get _startStr => DateFormat('yyyy-MM-dd').format(_startDate);
   String get _endStr => DateFormat('yyyy-MM-dd').format(_endDate);
 
-  Future<void> _loadExcluded() async {
+  /// 传给填写页/导出的日期范围。
+  /// 「全部历史」模式下没有日期范围概念，传空串，避免表头写着某 10 天、
+  /// 内容却是全部历史品类这种自相矛盾的情况。
+  String get _rangeStart => _useDateRange ? _startStr : '';
+  String get _rangeEnd => _useDateRange ? _endStr : '';
+
+  /// 用于展示与文件名的范围描述
+  String get _rangeLabel =>
+      _useDateRange ? '$_startStr 至 $_endStr' : '全部历史';
+
+  Future<void> _loadDeselected() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final saved = prefs.getStringList(_excludedKey) ?? [];
-      _excluded.addAll(saved);
+      // 兼容旧版本遗留的排除列表
+      final legacy = prefs.getStringList('inventory_excluded_categories') ?? [];
+      final saved = prefs.getStringList(_deselectedKey) ?? [];
+      _deselected.addAll({...legacy, ...saved});
+      if (legacy.isNotEmpty) {
+        await prefs.remove('inventory_excluded_categories');
+        await prefs.setStringList(_deselectedKey, _deselected.toList());
+      }
     } catch (_) {
       // 读取失败不影响主流程
     }
   }
 
-  Future<void> _persistExcluded() async {
+  Future<void> _persistDeselected() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setStringList(_excludedKey, _excluded.toList());
-    } catch (_) {}
-  }
-
-  Future<void> _loadPersistedSelection() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final saved = prefs.getStringList(_selectionKey) ?? [];
-      _persistedSelection.addAll(saved);
-    } catch (_) {}
-  }
-
-  Future<void> _persistSelection() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setStringList(_selectionKey, _persistedSelection.toList());
+      await prefs.setStringList(_deselectedKey, _deselected.toList());
     } catch (_) {}
   }
 
@@ -126,12 +126,12 @@ class _InventorySelectPageState extends State<InventorySelectPage> {
   }
 
   /// 加载品类列表。
-  /// 选中规则：
-  /// - 如果用户已有持久化选择（_persistedSelection 非空），按持久化选择恢复，
-  ///   只勾选同时满足「在当前列表中」且「未被排除」的品类。
-  /// - 如果用户从未做过选择，默认勾选所有未被排除的品类。
-  /// 这样「近10天」与「全部历史」来回切换，以及改日期范围时，
-  /// 之前在另一数据源选中的品类不会丢失。
+  /// 选中规则：当前数据源里的品类，默认全部勾选，
+  /// 再剔除用户此前主动取消过的（_deselected）。
+  /// 这样：
+  /// - 新进货的品类会自动进入勾选，不用手动维护；
+  /// - 「近10天」与「全部历史」来回切换、改日期范围，取消过的品类保持一致；
+  /// - 「全选」不会再出现点了却选不满的情况。
   Future<void> _loadCategories() async {
     setState(() => _loading = true);
     try {
@@ -145,21 +145,9 @@ class _InventorySelectPageState extends State<InventorySelectPage> {
       final merged = <String>{...categories, ..._customCategories}.toList();
       setState(() {
         _allCategories = merged;
-        if (_persistedSelection.isEmpty) {
-          // 首次使用：默认勾选所有未被排除的品类
-          _selected
-            ..clear()
-            ..addAll(merged.where((c) => !_excluded.contains(c)));
-        } else {
-          // 已有持久化选择：按持久化集合恢复，同时排除下架项
-          _selected
-            ..clear()
-            ..addAll(
-              merged.where(
-                (c) => _persistedSelection.contains(c) && !_excluded.contains(c),
-              ),
-            );
-        }
+        _selected
+          ..clear()
+          ..addAll(merged.where((c) => !_deselected.contains(c)));
       });
     } catch (e) {
       if (mounted) TDToast.showText('加载品类失败: $e', context: context);
@@ -172,62 +160,95 @@ class _InventorySelectPageState extends State<InventorySelectPage> {
     setState(() {
       if (checked == true) {
         _selected.add(category);
-        _persistedSelection.add(category);
-        _excluded.remove(category);
+        _deselected.remove(category);
       } else {
         _selected.remove(category);
-        _persistedSelection.remove(category);
-        _excluded.add(category);
+        _deselected.add(category);
       }
     });
-    _persistExcluded();
-    _persistSelection();
+    _persistDeselected();
   }
 
+  /// 全选：选中当前列表全部品类，并清除它们的不参与标记
   void _selectAll() {
     setState(() {
       for (final c in _allCategories) {
-        if (!_excluded.contains(c)) {
-          _selected.add(c);
-          _persistedSelection.add(c);
-        }
+        _selected.add(c);
+        _deselected.remove(c);
       }
     });
-    _persistSelection();
+    _persistDeselected();
   }
 
+  /// 反选：仅翻转当前列表的勾选状态
   void _invert() {
     setState(() {
       for (final c in _allCategories) {
         if (_selected.contains(c)) {
           _selected.remove(c);
-          _persistedSelection.remove(c);
-          _excluded.add(c);
+          _deselected.add(c);
         } else {
           _selected.add(c);
-          _persistedSelection.add(c);
-          _excluded.remove(c);
+          _deselected.remove(c);
         }
       }
     });
-    _persistExcluded();
-    _persistSelection();
+    _persistDeselected();
   }
 
+  /// 清空：仅取消当前列表的勾选
   void _clear() {
     setState(() {
       for (final c in _allCategories) {
         _selected.remove(c);
-        _persistedSelection.remove(c);
-        _excluded.add(c);
+        _deselected.add(c);
       }
     });
-    _persistExcluded();
-    _persistSelection();
+    _persistDeselected();
   }
 
+  /// 重置不参与列表：清空所有历史取消记录，恢复默认全选
+  Future<void> _resetDeselected() async {
+    if (_deselected.isEmpty) {
+      TDToast.showText('没有需要恢复的品类', context: context);
+      return;
+    }
+    final count = _deselected.length;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('恢复不参与品类'),
+        content: Text(
+          '将恢复 $count 个此前取消勾选的品类，它们在下次盘点时会重新默认勾选。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('恢复'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() {
+      _deselected.clear();
+      _selected.addAll(_allCategories);
+    });
+    await _persistDeselected();
+    if (mounted) {
+      TDToast.showSuccess('已恢复 $count 个品类', context: context);
+    }
+  }
+
+  /// 已选品类，按大类顺序输出。
+  /// 导出的空表、填写页、以及后续回读导出都沿用这个顺序，保证行序始终一致。
   List<String> get _selectedList {
-    return _allCategories.where((c) => _selected.contains(c)).toList();
+    final list = _allCategories.where((c) => _selected.contains(c)).toList();
+    return CategoryGroupOverride.sortByGroup(list);
   }
 
   Future<void> _exportInventoryCheck() async {
@@ -238,8 +259,9 @@ class _InventorySelectPageState extends State<InventorySelectPage> {
     try {
       await ExportService.instance.exportInventoryCheck(
         _selectedList,
-        _startStr,
-        _endStr,
+        _rangeStart,
+        _rangeEnd,
+        rangeLabel: _rangeLabel,
       );
       if (mounted) {
         TDToast.showSuccess('库存盘点表已导出', context: context);
@@ -256,7 +278,7 @@ class _InventorySelectPageState extends State<InventorySelectPage> {
       context: context,
       builder: (context) => const _AddCategoryDialog(),
     );
-    if (result == null) return;
+    if (result == null || !mounted) return;
 
     final name = result.name;
     if (_allCategories.contains(name)) {
@@ -264,16 +286,18 @@ class _InventorySelectPageState extends State<InventorySelectPage> {
       return;
     }
 
+    // 记住用户手动指定的大类，否则下次打开又会被自动推断覆盖
+    await CategoryGroupOverride.set(name, result.group);
+
     setState(() {
       _customCategories.add(name);
       _allCategories.add(name);
       _selected.add(name);
-      _persistedSelection.add(name);
-      _excluded.remove(name);
+      _deselected.remove(name);
     });
     await _persistCustomCategories();
-    await _persistSelection();
-    await _persistExcluded();
+    await _persistDeselected();
+    if (!mounted) return;
     TDToast.showSuccess('已新增并选中：$name', context: context);
   }
 
@@ -287,12 +311,13 @@ class _InventorySelectPageState extends State<InventorySelectPage> {
       MaterialPageRoute(
         builder: (context) => InventoryFillPage(
           categories: _selectedList,
-          startDate: _startStr,
-          endDate: _endStr,
+          startDate: _rangeStart,
+          endDate: _rangeEnd,
         ),
       ),
     );
-    if (result == true && mounted) {
+    if (!mounted) return;
+    if (result == true) {
       TDToast.showSuccess('已保存，可在「盘点历史」继续编辑', context: context);
     }
   }
@@ -308,7 +333,7 @@ class _InventorySelectPageState extends State<InventorySelectPage> {
 
     final map = <String, List<String>>{};
     for (final c in filtered) {
-      final group = CategoryClassifier.getGroup(c);
+      final group = CategoryGroupOverride.getGroup(c);
       map.putIfAbsent(group, () => []).add(c);
     }
     // 按已配置的大类顺序排序，其余（含"其他"）排在后面
@@ -361,12 +386,19 @@ class _InventorySelectPageState extends State<InventorySelectPage> {
                 case 'clear':
                   _clear();
                   break;
+                case 'resetDeselected':
+                  _resetDeselected();
+                  break;
               }
             },
             itemBuilder: (context) => [
               const PopupMenuItem(value: 'selectAll', child: Text('全选')),
               const PopupMenuItem(value: 'invert', child: Text('反选')),
               const PopupMenuItem(value: 'clear', child: Text('清空')),
+              PopupMenuItem(
+                value: 'resetDeselected',
+                child: Text('恢复不参与品类 (${_deselected.length})'),
+              ),
             ],
           ),
         ],
@@ -459,7 +491,7 @@ class _InventorySelectPageState extends State<InventorySelectPage> {
                   child: TDInput(
                     hintText: _useDateRange ? '搜索近10天品类' : '搜索全部历史品类',
                     leftIcon: const Icon(TDIcons.search, size: 18),
-                    onChanged: (v) => setState(() => _keyword = v ?? ''),
+                    onChanged: (v) => setState(() => _keyword = v),
                     needClear: true,
                   ),
                 ),
@@ -532,17 +564,20 @@ class _InventorySelectPageState extends State<InventorySelectPage> {
                                     );
                                     return;
                                   }
+                                  await CategoryGroupOverride.set(
+                                    name,
+                                    CategoryGroupOverride.getGroup(name),
+                                  );
                                   setState(() {
                                     _customCategories.add(name);
                                     _allCategories.add(name);
                                     _selected.add(name);
-                                    _persistedSelection.add(name);
-                                    _excluded.remove(name);
+                                    _deselected.remove(name);
                                     _keyword = '';
                                   });
                                   await _persistCustomCategories();
-                                  await _persistSelection();
-                                  await _persistExcluded();
+                                  await _persistDeselected();
+                                  if (!mounted) return;
                                   TDToast.showSuccess(
                                     '已新增并选中：$name',
                                     context: context,
@@ -740,10 +775,10 @@ class _AddCategoryDialogState extends State<_AddCategoryDialog> {
               hintText: '输入品类名称，如：D101榴莲',
               autofocus: true,
               onChanged: (v) {
-                final name = (v ?? '').trim();
+                final name = v.trim();
                 if (name.isNotEmpty) {
                   setState(() {
-                    _selectedGroup = CategoryClassifier.getGroup(name);
+                    _selectedGroup = CategoryGroupOverride.getGroup(name);
                   });
                 }
               },

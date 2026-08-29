@@ -165,11 +165,13 @@ class ExportService {
 
   /// 导出库存盘点表（多栏布局：产品名称+库存数量 横向并列，默认3组，库存数量留空由用户手填）
   /// [categories] 为已勾选、需要盘点的品类清单（由用户在选择页筛选）
+  /// [rangeLabel] 用于文件名的范围描述；「全部历史」模式下没有日期范围，需显式传入
   Future<void> exportInventoryCheck(
     List<String> categories,
     String startDate,
-    String endDate,
-  ) async {
+    String endDate, {
+    String? rangeLabel,
+  }) async {
 
     // 每组「产品名称 + 库存数量」两列，横向并列 3 组，节省打印纸张
     const int groups = 3;
@@ -241,7 +243,9 @@ class ExportService {
     }
 
     final tempDir = await getTemporaryDirectory();
-    final fileName = '库存盘点表_$startDate至$endDate.xlsx';
+    final label =
+        (rangeLabel == null || rangeLabel.isEmpty) ? '$startDate至$endDate' : rangeLabel;
+    final fileName = '库存盘点表_$label.xlsx';
     final filePath = '${tempDir.path}/$fileName';
     final file = File(filePath);
     await file.writeAsBytes(excelBytes);
@@ -256,8 +260,9 @@ class ExportService {
     List<String> categories,
     Map<String, String> quantities,
     String startDate,
-    String endDate,
-  ) async {
+    String endDate, {
+    String? rangeLabel,
+  }) async {
     const int groups = 3;
 
     var excel = Excel.createExcel();
@@ -320,7 +325,9 @@ class ExportService {
     }
 
     final tempDir = await getTemporaryDirectory();
-    final fileName = '库存盘点表_已填_${startDate}至$endDate.xlsx';
+    final label =
+        (rangeLabel == null || rangeLabel.isEmpty) ? '$startDate至$endDate' : rangeLabel;
+    final fileName = '库存盘点表_已填_$label.xlsx';
     final filePath = '${tempDir.path}/$fileName';
     final file = File(filePath);
     await file.writeAsBytes(excelBytes);
